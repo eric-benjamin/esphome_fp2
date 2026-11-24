@@ -73,6 +73,74 @@ void FP2Component::set_location_reporting_enabled(bool enabled) {
   }
 }
 
+void FP2MotionNumber::setup() {
+  this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
+  float v = this->initial_;
+  float saved;
+  if (this->pref_.load(&saved) && std::isfinite(saved) && saved > 0) v = saved;
+  this->apply_(v);
+}
+
+void FP2MotionNumber::control(float value) {
+  this->apply_(value);
+  this->pref_.save(&value);
+}
+
+void FP2MotionNumber::apply_(float value) {
+  if (this->parent_ != nullptr) {
+    if (this->kind_ == DISTANCE) this->parent_->set_motion_distance_cm(value);
+    else this->parent_->set_motion_timeout_s(value);
+  }
+  this->publish_state(value);
+}
+
+bool FP2Component::target_moving_(uint8_t id, int16_t x, int16_t y, uint32_t now) {
+  MotionTrack *t = nullptr;
+  MotionTrack *free_slot = nullptr;
+  for (auto &m : motion_tracks_) {
+    if (m.used && m.id == id) { t = &m; break; }
+    if (!m.used && free_slot == nullptr) free_slot = &m;
+  }
+  if (t == nullptr) {
+    if (free_slot == nullptr) {
+      // All slots taken: recycle the one not seen for longest.
+      free_slot = &motion_tracks_[0];
+      for (auto &m : motion_tracks_) if (m.seen_ms < free_slot->seen_ms) free_slot = &m;
+    }
+    t = free_slot;
+    t->used = true; t->id = id; t->ref_x = x; t->ref_y = y; t->last_move_ms = 0;
+  }
+  t->seen_ms = now;
+  float dx = (float) x - t->ref_x, dy = (float) y - t->ref_y;
+  if (std::sqrt(dx * dx + dy * dy) >= motion_distance_cm_) {
+    t->ref_x = x; t->ref_y = y; t->last_move_ms = now;
+  }
+  return t->last_move_ms != 0 && now - t->last_move_ms <= motion_timeout_ms_;
+}
+
+void FP2Component::prune_motion_tracks_(uint32_t now) {
+  for (auto &m : motion_tracks_)
+    if (m.used && now - m.seen_ms > 3000) m.used = false;
+}
+
+void FP2Component::force_motion_off_() {
+  for (auto &m : motion_tracks_) m.used = false;
+  if (global_motion_sensor_ != nullptr && (!global_motion_sensor_->has_state() || global_motion_sensor_->state))
+    global_motion_sensor_->publish_state(false);
+  for (auto *z : zones_)
+    if (z->motion_sensor != nullptr && z->motion_sensor->state) z->publish_motion(false);
+}
+
+void FP2Component::check_motion_timeout_() {
+  // The stream can stop (learning, a lost target) with motion left on.
+  if (last_motion_ms_ == 0) return;
+  uint32_t now = millis();
+  if (now - last_motion_ms_ > motion_timeout_ms_) {
+    last_motion_ms_ = 0;
+    force_motion_off_();
+  }
+}
+
 void FP2LearnButton::press_action() {
   if (this->parent_ != nullptr) this->parent_->trigger_learning(this->attr_);
 }
@@ -110,6 +178,7 @@ void FP2Component::loop() {
   process_command_queue_();
   check_derived_absence_();
   check_target_stream_stale_();
+  check_motion_timeout_();
 
   if (millis() - rx_stats_last_ms_ > 60000) {
     rx_stats_last_ms_ = millis();
@@ -848,8 +917,8 @@ void FP2Component::handle_report_(AttrId attr_id, const std::vector<uint8_t> &pa
         ESP_LOGI(TAG, "Presence event: %u (%s)", u8, presence_event_name(u8));
         if (presence_event_sensor_ != nullptr)
           presence_event_sensor_->publish_state(presence_event_name(u8));
-        if (global_motion_sensor_ != nullptr)
-          global_motion_sensor_->publish_state((u8 & 0x01) == 0);
+        // Motion is measured from target positions (see target_moving_), not
+        // from the event parity.
       }
       break;
 
@@ -859,6 +928,7 @@ void FP2Component::handle_report_(AttrId attr_id, const std::vector<uint8_t> &pa
         ESP_LOGI(TAG, "Received global presence report: %u", u8);
         if (global_presence_sensor_ != nullptr)
           global_presence_sensor_->publish_state(u8 != 0);
+        if (u8 == 0) { last_motion_ms_ = 0; force_motion_off_(); }
       }
       break;
 
@@ -1117,7 +1187,7 @@ void FP2Component::update_derived_states_(const std::vector<uint8_t> &payload, u
       continue;
     }
     valid++;
-    bool target_moving = v > motion_velocity_threshold_ || v < -motion_velocity_threshold_;
+    bool target_moving = target_moving_(tid, x, y, now);
     if (target_moving) moving = true;
     for (size_t z = 0; z < zones_.size(); z++) {
       if (zones_[z]->is_empty() || !zone_contains_(zones_[z], x, y)) continue;
@@ -1129,27 +1199,35 @@ void FP2Component::update_derived_states_(const std::vector<uint8_t> &payload, u
   }
   if (people_count_sensor_ != nullptr && (!people_count_sensor_->has_state() || (int) people_count_sensor_->state != valid))
     people_count_sensor_->publish_state(valid);
+  prune_motion_tracks_(now);
   if (valid > 0) {
     last_target_seen_ms_ = now;
     if (!radar_presence_seen_) {
       if (global_presence_sensor_ != nullptr && (!global_presence_sensor_->has_state() || !global_presence_sensor_->state))
         global_presence_sensor_->publish_state(true);
-      if (global_motion_sensor_ != nullptr && (!global_motion_sensor_->has_state() || global_motion_sensor_->state != moving))
-        global_motion_sensor_->publish_state(moving);
     }
   }
+  // Motion never shows while presence is off.
+  bool presence_on = global_presence_sensor_ == nullptr || (global_presence_sensor_->has_state() && global_presence_sensor_->state);
+  if (!presence_on) moving = false;
+  if (moving) last_motion_ms_ = now;
+  if (global_motion_sensor_ != nullptr && (!global_motion_sensor_->has_state() || global_motion_sensor_->state != moving))
+    global_motion_sensor_->publish_state(moving);
   for (size_t z = 0; z < zones_.size(); z++) {
     auto *zone = zones_[z];
     // Zones the radar reports itself keep the radar's answer; the rest (a zone
     // painted from the card that the radar has not reported yet) are derived.
-    if (zone->radar_seen) continue;
-    if (zone_hit[z]) {
+    if (!zone->radar_seen && zone_hit[z]) {
       zone_last_seen_ms_[z] = now;
       if (zone->presence_sensor != nullptr && (!zone->presence_sensor->has_state() || !zone->presence_sensor->state))
         zone->publish_presence(true);
-      if (zone->motion_sensor != nullptr && (!zone->motion_sensor->has_state() || zone->motion_sensor->state != zone_moving[z]))
-        zone->publish_motion(zone_moving[z]);
     }
+    // Zone motion: a moving target inside the zone, and only while the zone's
+    // presence is on (the radar's own answer for reported zones).
+    bool zone_presence_on = zone->presence_sensor == nullptr || (zone->presence_sensor->has_state() && zone->presence_sensor->state);
+    bool zm = presence_on && zone_presence_on && zone_hit[z] && zone_moving[z];
+    if (zone->motion_sensor != nullptr && (!zone->motion_sensor->has_state() || zone->motion_sensor->state != zm))
+      zone->publish_motion(zm);
   }
 }
 

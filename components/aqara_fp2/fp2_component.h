@@ -2,6 +2,8 @@
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
+#include "esphome/components/number/number.h"
+#include "esphome/core/preferences.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/select/select.h"
 #include "esphome/components/sensor/sensor.h"
@@ -291,9 +293,28 @@ protected:
   AttrId attr_{AttrId::INVALID};
 };
 
+// Runtime-tunable motion parameters (timeout in s, distance in cm), restored
+// from flash so the value set in Home Assistant survives a reboot.
+class FP2MotionNumber : public number::Number, public Component {
+public:
+  enum Kind : uint8_t { TIMEOUT = 0, DISTANCE = 1 };
+  void set_parent(FP2Component *parent, uint8_t kind, float initial) { parent_ = parent; kind_ = kind; initial_ = initial; }
+  void setup() override;
+
+protected:
+  void control(float value) override;
+  void apply_(float value);
+  FP2Component *parent_{nullptr};
+  uint8_t kind_{TIMEOUT};
+  float initial_{0};
+  ESPPreferenceObject pref_;
+};
+
 class FP2Component : public Component, public uart::UARTDevice {
 public:
   void trigger_learning(AttrId attr);
+  void set_motion_timeout_s(float s) { motion_timeout_ms_ = (uint32_t) (s * 1000.0f); }
+  void set_motion_distance_cm(float cm) { motion_distance_cm_ = cm; }
   void setup() override;
   void loop() override;
   void dump_config() override;
@@ -531,6 +552,25 @@ protected:
   bool require_active_target_{true};
   uint32_t absence_timeout_ms_{30000};
   int16_t motion_velocity_threshold_{15};
+  // Motion from position: a target is moving when it has travelled more than
+  // motion_distance_cm_ since its reference point; it stays "moving" for
+  // motion_timeout_ms_ after the last such step. Motion is forced off whenever
+  // presence goes off, regardless of the timeout.
+  struct MotionTrack {
+    bool used{false};
+    uint8_t id{0};
+    int16_t ref_x{0}, ref_y{0};
+    uint32_t last_move_ms{0};
+    uint32_t seen_ms{0};
+  };
+  MotionTrack motion_tracks_[8];
+  uint32_t motion_timeout_ms_{5000};
+  float motion_distance_cm_{20.0f};
+  uint32_t last_motion_ms_{0};
+  bool target_moving_(uint8_t id, int16_t x, int16_t y, uint32_t now);
+  void prune_motion_tracks_(uint32_t now);
+  void force_motion_off_();
+  void check_motion_timeout_();
   uint32_t last_target_seen_ms_{0};
   uint32_t last_drop_log_ms_{0};
   bool derived_presence_state_{false};
