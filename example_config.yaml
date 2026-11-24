@@ -214,6 +214,10 @@ aqara_fp2:
   people_counting_switch:      { name: "People Counting" }
   fall_detection_switch:       { name: "Fall Detection" }
   sleep_monitoring_switch:     { name: "Sleep Monitoring" }
+  # One-shot learning triggers (the app's "AI learning"): the radar learns
+  # interference sources / the room edge itself and reports the maps back.
+  interference_learning_button: { name: "Learn Interference" }
+  edge_learning_button:         { name: "Learn Edge" }
 
   radar_software_version:
     name: "Radar Software Version"

@@ -3,7 +3,7 @@ import json
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import binary_sensor, sensor, switch, select, uart
+from esphome.components import binary_sensor, button, sensor, switch, select, uart
 from esphome.components import text_sensor as text_sensor_
 from esphome.const import (
     CONF_DEVICE_CLASS,
@@ -31,7 +31,7 @@ from esphome.util import Registry
 from ..aqara_fp2_accel import AqaraFP2Accel
 
 DEPENDENCIES = ["uart"]
-AUTO_LOAD = ["binary_sensor", "sensor", "text_sensor", "switch", "select", "json"]
+AUTO_LOAD = ["binary_sensor", "button", "sensor", "text_sensor", "switch", "select", "json"]
 
 aqara_fp2_ns = cg.esphome_ns.namespace("aqara_fp2")
 FP2Component = aqara_fp2_ns.class_("FP2Component", cg.Component, uart.UARTDevice)
@@ -56,6 +56,14 @@ SETTING_SWITCHES = {
 }
 
 FP2LocationSwitch = aqara_fp2_ns.class_("FP2LocationSwitch", switch.Switch, cg.Component)
+FP2LearnButton = aqara_fp2_ns.class_("FP2LearnButton", button.Button, cg.Component)
+AttrId = aqara_fp2_ns.enum("AttrId", is_class=True)
+
+# One-shot learning triggers (the app's "AI learning"): key -> (AttrId, icon)
+LEARN_BUTTONS = {
+    "interference_learning_button": ("INTERFERENCE_AUTO_ENABLE", "mdi:school"),
+    "edge_learning_button": ("EDGE_AUTO_ENABLE", "mdi:border-outside"),
+}
 FP2Zone = aqara_fp2_ns.class_("FP2Zone", cg.Component)
 
 CONF_FP2_ID = "fp2_id"
@@ -278,6 +286,10 @@ CONFIG_SCHEMA = (
                 cv.Optional(k): switch.switch_schema(FP2SettingSwitch, icon=icon, entity_category=ENTITY_CATEGORY_CONFIG, default_restore_mode="DISABLED")
                 for k, (_, icon) in SETTING_SWITCHES.items()
             },
+            **{
+                cv.Optional(k): button.button_schema(FP2LearnButton, icon=icon)
+                for k, (_, icon) in LEARN_BUTTONS.items()
+            },
             cv.Optional(CONF_INTERFERENCE_GRID): parse_ascii_grid,
             cv.Optional(CONF_EXIT_GRID): parse_ascii_grid,
             cv.Optional(CONF_EDGE_GRID): parse_ascii_grid,
@@ -403,6 +415,12 @@ async def to_code(config):
             await cg.register_component(sw, config[key])
             cg.add(sw.set_parent(var, getattr(Setting, setting)))
             cg.add(var.add_setting_switch(sw))
+
+    for key, (attr, _) in LEARN_BUTTONS.items():
+        if key in config:
+            btn = await button.new_button(config[key])
+            await cg.register_component(btn, config[key])
+            cg.add(btn.set_parent(var, getattr(AttrId, attr)))
 
     cg.add(var.set_replay_stock_init(config["debug_replay_stock_init"]))
     cg.add(var.set_derive_presence(config["derive_presence"]))

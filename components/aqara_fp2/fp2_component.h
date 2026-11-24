@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/button/button.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/select/select.h"
 #include "esphome/components/sensor/sensor.h"
@@ -277,8 +278,22 @@ protected:
   FP2Component *parent_{nullptr};
 };
 
+// One-shot learning triggers (the app's "AI learning" buttons): pressing writes
+// a 1 to the radar's auto-learn attribute once. Nothing is persisted or
+// re-sent at boot: the radar runs the learning itself and reports the result.
+class FP2LearnButton : public button::Button, public Component {
+public:
+  void set_parent(FP2Component *parent, AttrId attr) { parent_ = parent; attr_ = attr; }
+
+protected:
+  void press_action() override;
+  FP2Component *parent_{nullptr};
+  AttrId attr_{AttrId::INVALID};
+};
+
 class FP2Component : public Component, public uart::UARTDevice {
 public:
+  void trigger_learning(AttrId attr);
   void setup() override;
   void loop() override;
   void dump_config() override;

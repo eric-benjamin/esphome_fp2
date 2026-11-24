@@ -73,6 +73,19 @@ void FP2Component::set_location_reporting_enabled(bool enabled) {
   }
 }
 
+void FP2LearnButton::press_action() {
+  if (this->parent_ != nullptr) this->parent_->trigger_learning(this->attr_);
+}
+
+void FP2Component::trigger_learning(AttrId attr) {
+  if (!init_done_) {
+    ESP_LOGW(TAG, "Learning 0x%04X ignored: radar not initialised", (uint16_t) attr);
+    return;
+  }
+  ESP_LOGI(TAG, "Learning 0x%04X started", (uint16_t) attr);
+  enqueue_command_(OpCode::WRITE, attr, true);
+}
+
 void FP2LocationSwitch::write_state(bool state) {
   if (this->parent_ != nullptr) {
     this->parent_->set_location_reporting_enabled(state);
@@ -888,8 +901,34 @@ void FP2Component::handle_report_(AttrId attr_id, const std::vector<uint8_t> &pa
     case AttrId::TARGET_POSTURE:
       break;  // not used
 
+    // Maps the radar learned itself (after a learning button). The payload is
+    // [SubID 2][DataType 1][40 bytes]. Keep them as the live maps so the card
+    // shows what the radar decided, derived presence honours it and the next
+    // boot writes the learned map back instead of all-zero.
+    case AttrId::INTERFERENCE_MAP:
+    case AttrId::EDGE_MAP: {
+      if (payload.size() < 43) {
+        ESP_LOGW(TAG, "Map report 0x%04X too short (%d bytes)", (uint16_t) attr_id, payload.size());
+        break;
+      }
+      const int k = attr_id == AttrId::INTERFERENCE_MAP ? 0 : 1;
+      GridMap &g = k == 0 ? interference_grid_ : edge_grid_;
+      std::copy(payload.end() - 40, payload.end(), g.begin());
+      bool any = false;
+      for (auto b : g) if (b) { any = true; break; }
+      if (k == 0) has_interference_grid_ = any; else has_edge_grid_ = any;
+      map_override_[k] = true;
+      save_map_overrides_();
+      publish_map_sensor_(k);
+      ESP_LOGI(TAG, "Radar reported a learned %s map (%s)", k == 0 ? "interference" : "edge", any ? "cells set" : "empty");
+      break;
+    }
+
     default:
-      ESP_LOGW(TAG, "Unhandled report 0x%04X (%d bytes)", (uint16_t) attr_id, payload.size());
+      // Unknown reports are dumped in full: that is how a new attribute (e.g.
+      // what the radar sends after a learning run) gets identified.
+      ESP_LOGW(TAG, "Unhandled report 0x%04X (%d bytes): %s", (uint16_t) attr_id, payload.size(),
+               format_hex_pretty(payload).c_str());
       break;
   }
 }
