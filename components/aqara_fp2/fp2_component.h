@@ -485,6 +485,11 @@ protected:
   GPIOPin *reset_pin_{nullptr};
   bool init_done_{false};
   uint32_t last_heartbeat_millis_{0};
+  // Target stream watchdog: clears the published targets when frames stop.
+  static const uint32_t TARGET_STREAM_STALE_MS = 2000;
+  uint32_t last_target_frame_ms_{0};
+  bool target_stream_cleared_{false};
+  void check_target_stream_stale_();
 
   // Configuration State
   uint8_t mounting_position_{0x01}; // Default Wall

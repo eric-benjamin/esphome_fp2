@@ -687,11 +687,14 @@ class AqaraFP2Card extends HTMLElement {
     const enable = on === undefined ? !this.edit : on;
     if (enable) {
       const zones = this.data ? this.data.zones : [];
-      if (!zones.length) return;
+      const layers = this.data ? this.data.layers : [];
+      // The maps (interference / exclude / entry-exit) are editable even when
+      // the yaml declares no zones.
+      if (!zones.length && !layers.length) return;
       const sel = this.querySelector(".e-zone");
       sel.innerHTML = zones.map((z) => `<option value="${z.id}">${z.name}${z.empty ? " (not drawn)" : ""}</option>`).join("") +
-        this.data.layers.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
-      sel.value = String(zoneId || zones[0].id);
+        layers.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
+      sel.value = String(zoneId || (zones.length ? zones[0].id : layers[0].id));
       this.selectEditZone(sel.value);
       this.editor.hidden = false;
       this.canvas.classList.add("editing");

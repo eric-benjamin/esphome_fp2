@@ -109,12 +109,29 @@ void FP2Component::loop() {
   check_heartbeat_watchdog_();
   process_command_queue_();
   check_derived_absence_();
+  check_target_stream_stale_();
 
   if (millis() - rx_stats_last_ms_ > 60000) {
     rx_stats_last_ms_ = millis();
     ESP_LOGD(TAG, "RX stats: bytes=%u frames=%u dropped_sync=%u ver_mismatch=%u hdr_fail=%u crc_fail=%u",
              rx_bytes_, rx_frames_, rx_dropped_sync_, rx_ver_mismatch_, rx_hdr_fail_, rx_crc_fail_);
   }
+}
+
+// The radar stops streaming target frames while it runs a learning pass (and
+// whenever it goes quiet). Without this the last frame stays on the text
+// sensor and the card keeps drawing people who are no longer reported.
+void FP2Component::check_target_stream_stale_() {
+  if (!init_done_ || !location_reporting_active_ || last_target_frame_ms_ == 0 || target_stream_cleared_)
+    return;
+  if (millis() - last_target_frame_ms_ < TARGET_STREAM_STALE_MS)
+    return;
+  target_stream_cleared_ = true;
+  ESP_LOGI(TAG, "No target frame for %u ms: publishing an empty target list", (unsigned) TARGET_STREAM_STALE_MS);
+  if (this->target_tracking_sensor_ != nullptr)
+    this->target_tracking_sensor_->publish_state(esphome::base64_encode(std::vector<uint8_t>{0}));
+  if (derive_presence_)
+    update_derived_states_(std::vector<uint8_t>(), 0);
 }
 
 void FP2Component::check_heartbeat_watchdog_() {
@@ -984,6 +1001,8 @@ void FP2Component::handle_location_tracking_report_(const std::vector<uint8_t> &
   if (payload.size() < 6 || payload[2] != 0x06) {
     return;
   }
+  last_target_frame_ms_ = millis();
+  target_stream_cleared_ = false;
 
   // The count byte is not always trustworthy (186 has been seen on a frame
   // carrying a single record), so clamp it to what the payload actually holds
