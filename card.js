@@ -90,9 +90,15 @@ class AqaraFP2Card extends HTMLElement {
   ent(domain, objectId) {
     if (!objectId) return null;
     const dev = this.deviceName();
-    for (const id of [`${domain}.${dev}_${objectId}`, `${domain}.${objectId}`])
+    const guess = `${domain}.${dev}_${objectId}`;
+    // Optional `entities:` map in the card config: { "<guessed id>": "<real id>" }
+    // for entities that were renamed in Home Assistant (the guess is what the
+    // card would use without the map, so the key is easy to find).
+    const map = this.config.entities || {};
+    if (map[guess]) return map[guess];
+    for (const id of [guess, `${domain}.${objectId}`])
       if (this._hass && this._hass.states[id]) return id;
-    return `${domain}.${dev}_${objectId}`;
+    return guess;
   }
 
   st(id) { const s = id && this._hass && this._hass.states[id]; return s ? s.state : null; }
