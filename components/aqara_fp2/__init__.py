@@ -65,7 +65,11 @@ FP2MotionNumber = aqara_fp2_ns.class_("FP2MotionNumber", number.Number, cg.Compo
 MOTION_NUMBERS = {
     "motion_timeout": (0, 5.0, 1.0, 600.0, 1.0, "s", "mdi:timer-outline"),
     "motion_distance": (1, 20.0, 5.0, 200.0, 5.0, "cm", "mdi:ruler"),
+    # Added to the radar temperature; the radar reports its die temperature,
+    # which runs well above the room.
+    "temperature_offset": (2, 0.0, -50.0, 50.0, 0.5, "°C", "mdi:thermometer-minus"),
 }
+CONF_INITIAL_VALUE = "initial_value"
 
 LEARN_BUTTONS = {
     "interference_learning_button": ("INTERFERENCE_AUTO_ENABLE", "mdi:school"),
@@ -298,8 +302,10 @@ CONFIG_SCHEMA = (
                 for k, (_, icon) in LEARN_BUTTONS.items()
             },
             **{
-                cv.Optional(k): number.number_schema(FP2MotionNumber, unit_of_measurement=unit, icon=icon, entity_category=ENTITY_CATEGORY_CONFIG)
-                for k, (_, _, _, _, _, unit, icon) in MOTION_NUMBERS.items()
+                cv.Optional(k): number.number_schema(FP2MotionNumber, unit_of_measurement=unit, icon=icon, entity_category=ENTITY_CATEGORY_CONFIG).extend(
+                    {cv.Optional(CONF_INITIAL_VALUE, default=default): cv.float_range(min=lo, max=hi)}
+                )
+                for k, (_, default, lo, hi, _, unit, icon) in MOTION_NUMBERS.items()
             },
             cv.Optional(CONF_INTERFERENCE_GRID): parse_ascii_grid,
             cv.Optional(CONF_EXIT_GRID): parse_ascii_grid,
@@ -437,7 +443,7 @@ async def to_code(config):
         if key in config:
             num = await number.new_number(config[key], min_value=lo, max_value=hi, step=step)
             await cg.register_component(num, config[key])
-            cg.add(num.set_parent(var, kind, default))
+            cg.add(num.set_parent(var, kind, config[key][CONF_INITIAL_VALUE]))
 
     cg.add(var.set_replay_stock_init(config["debug_replay_stock_init"]))
     cg.add(var.set_derive_presence(config["derive_presence"]))

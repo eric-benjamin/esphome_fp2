@@ -77,7 +77,7 @@ void FP2MotionNumber::setup() {
   this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
   float v = this->initial_;
   float saved;
-  if (this->pref_.load(&saved) && std::isfinite(saved) && saved > 0) v = saved;
+  if (this->pref_.load(&saved) && std::isfinite(saved)) v = saved;
   this->apply_(v);
 }
 
@@ -89,6 +89,7 @@ void FP2MotionNumber::control(float value) {
 void FP2MotionNumber::apply_(float value) {
   if (this->parent_ != nullptr) {
     if (this->kind_ == DISTANCE) this->parent_->set_motion_distance_cm(value);
+    else if (this->kind_ == TEMPERATURE_OFFSET) this->parent_->set_temperature_offset(value);
     else this->parent_->set_motion_timeout_s(value);
   }
   this->publish_state(value);
@@ -1252,8 +1253,9 @@ void FP2Component::check_derived_absence_() {
 void FP2Component::handle_temperature_report_(const std::vector<uint8_t> &payload) {
     if (payload.size() == 5 && payload[2] == 0x01) {
         uint16_t temp = payload[3] << 8 | payload[4];
+        last_raw_temperature_ = temp;
         if (radar_temperature_sensor_ != nullptr) {
-            radar_temperature_sensor_->publish_state(temp);
+            radar_temperature_sensor_->publish_state(temp + temperature_offset_);
         }
         ESP_LOGD(TAG, "Radar temperature report: %d", temp);
     } else {

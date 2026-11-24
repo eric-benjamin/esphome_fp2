@@ -293,11 +293,12 @@ protected:
   AttrId attr_{AttrId::INVALID};
 };
 
-// Runtime-tunable motion parameters (timeout in s, distance in cm), restored
+// Runtime-tunable numbers (motion timeout s, motion distance cm, temperature
+// offset °C), restored
 // from flash so the value set in Home Assistant survives a reboot.
 class FP2MotionNumber : public number::Number, public Component {
 public:
-  enum Kind : uint8_t { TIMEOUT = 0, DISTANCE = 1 };
+  enum Kind : uint8_t { TIMEOUT = 0, DISTANCE = 1, TEMPERATURE_OFFSET = 2 };
   void set_parent(FP2Component *parent, uint8_t kind, float initial) { parent_ = parent; kind_ = kind; initial_ = initial; }
   void setup() override;
 
@@ -315,6 +316,7 @@ public:
   void trigger_learning(AttrId attr);
   void set_motion_timeout_s(float s) { motion_timeout_ms_ = (uint32_t) (s * 1000.0f); }
   void set_motion_distance_cm(float cm) { motion_distance_cm_ = cm; }
+  void set_temperature_offset(float c) { temperature_offset_ = c; }
   void setup() override;
   void loop() override;
   void dump_config() override;
@@ -566,6 +568,9 @@ protected:
   MotionTrack motion_tracks_[8];
   uint32_t motion_timeout_ms_{5000};
   float motion_distance_cm_{20.0f};
+  // Added to the radar temperature before publishing (the radar runs hot).
+  float temperature_offset_{0.0f};
+  float last_raw_temperature_{NAN};
   uint32_t last_motion_ms_{0};
   bool target_moving_(uint8_t id, int16_t x, int16_t y, uint32_t now);
   void prune_motion_tracks_(uint32_t now);
