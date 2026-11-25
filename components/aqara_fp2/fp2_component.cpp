@@ -146,6 +146,40 @@ void FP2LearnButton::press_action() {
   if (this->parent_ != nullptr) this->parent_->trigger_learning(this->attr_);
 }
 
+void FP2OrientationButton::press_action() {
+  if (this->parent_ != nullptr) this->parent_->resend_orientation();
+}
+
+void FP2Component::resend_orientation() {
+  if (!init_done_) {
+    ESP_LOGW(TAG, "Orientation resend ignored: radar not initialised");
+    return;
+  }
+  send_orientation_reports_();
+}
+
+// Runs from loop(): first valid orientation after init, then every change of
+// the direction class or a tilt change of 5 degrees or more.
+void FP2Component::check_orientation_() {
+  if (!init_done_ || fp2_accel_ == nullptr) return;
+  uint32_t now = millis();
+  if (now - last_orientation_check_ms_ < 500) return;
+  last_orientation_check_ms_ = now;
+  if (force_direction_ < 0 && !fp2_accel_->has_valid_orientation()) return;
+  uint8_t dir = current_direction_();
+  uint16_t angle = current_angle_();
+  if (!orientation_sent_) {
+    send_orientation_reports_();
+    return;
+  }
+  int dAngle = (int) angle - (int) last_sent_angle_;
+  if (dir != last_sent_direction_ || dAngle >= 5 || dAngle <= -5) {
+    ESP_LOGI(TAG, "Orientation changed (direction %u -> %u, angle %u -> %u); re-reporting to radar",
+             last_sent_direction_, dir, last_sent_angle_, angle);
+    send_orientation_reports_();
+  }
+}
+
 void FP2Component::trigger_learning(AttrId attr) {
   if (!init_done_) {
     ESP_LOGW(TAG, "Learning 0x%04X ignored: radar not initialised", (uint16_t) attr);
@@ -175,6 +209,7 @@ void FP2Component::loop() {
   }
 
   check_initialization_();
+  check_orientation_();
   check_heartbeat_watchdog_();
   process_command_queue_();
   check_derived_absence_();
@@ -240,8 +275,17 @@ void FP2Component::check_initialization_() {
     init_time_millis_ = millis();
 
     // 0. Like the stock firmware: tell the radar how it is mounted and read
-    //    its temperature before configuring anything.
-    send_orientation_reports_();
+    //    its temperature before configuring anything. The orientation goes out
+    //    only once the accelerometer has resolved a class; at this point it
+    //    usually has not (the first report used to be INVALID/0, and the radar
+    //    never asks for the angle again), so check_orientation_() sends it as
+    //    soon as it is valid and re-sends on change.
+    orientation_sent_ = false;
+    if (force_direction_ >= 0 || (fp2_accel_ != nullptr && fp2_accel_->has_valid_orientation())) {
+      send_orientation_reports_();
+    } else {
+      ESP_LOGI(TAG, "Orientation not yet valid at init; reporting it to the radar once the accelerometer settles");
+    }
     enqueue_read_(AttrId::TEMPERATURE);
 
     if (replay_stock_init_) {
@@ -664,7 +708,11 @@ void FP2Component::send_reverse_response_(AttrId attr_id, uint16_t word_val, uin
 void FP2Component::send_orientation_reports_() {
   uint8_t dir = current_direction_();
   uint16_t angle = current_angle_();
-  ESP_LOGI(TAG, "Reporting orientation to radar: direction=%u angle=%u", dir, angle);
+  ESP_LOGI(TAG, "Reporting orientation to radar: direction=%u angle=%u%s", dir, angle,
+           (force_direction_ >= 0 || force_angle_ >= 0) ? " (forced)" : "");
+  orientation_sent_ = true;
+  last_sent_direction_ = dir;
+  last_sent_angle_ = angle;
   FP2Command c1;
   c1.type = OpCode::REPORT; c1.attr_id = AttrId::DEVICE_DIRECTION; c1.retry_count = 0;
   c1.data = {0x01, 0x43, 0x00, dir};

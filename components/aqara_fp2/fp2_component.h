@@ -283,6 +283,17 @@ protected:
 // One-shot learning triggers (the app's "AI learning" buttons): pressing writes
 // a 1 to the radar's auto-learn attribute once. Nothing is persisted or
 // re-sent at boot: the radar runs the learning itself and reports the result.
+// Re-sends the device orientation (direction class + tilt angle) to the radar
+// on demand, for checking what the radar has been told.
+class FP2OrientationButton : public button::Button, public Component {
+public:
+  void set_parent(FP2Component *parent) { parent_ = parent; }
+
+protected:
+  void press_action() override;
+  FP2Component *parent_{nullptr};
+};
+
 class FP2LearnButton : public button::Button, public Component {
 public:
   void set_parent(FP2Component *parent, AttrId attr) { parent_ = parent; attr_ = attr; }
@@ -314,6 +325,7 @@ protected:
 class FP2Component : public Component, public uart::UARTDevice {
 public:
   void trigger_learning(AttrId attr);
+  void resend_orientation();
   void set_motion_timeout_s(float s) { motion_timeout_ms_ = (uint32_t) (s * 1000.0f); }
   void set_motion_distance_cm(float cm) { motion_distance_cm_ = cm; }
   void set_temperature_offset(float c) { temperature_offset_ = c; }
@@ -525,6 +537,15 @@ protected:
   uint8_t current_direction_() { return force_direction_ >= 0 ? (uint8_t) force_direction_ : (uint8_t) fp2_accel_->get_orientation(); }
   uint16_t current_angle_() { return force_angle_ >= 0 ? (uint16_t) force_angle_ : (uint16_t) fp2_accel_->get_output_angle_z(); }
   void send_orientation_reports_();
+  // Orientation reporting state. The stock firmware reports the accelerometer's
+  // direction class + tilt angle to the radar at boot and again on every change
+  // (acc_dir_cb). The radar's coordinate frame depends on it, so the report is
+  // held until the accelerometer has a valid class and re-sent when it moves.
+  void check_orientation_();
+  bool orientation_sent_{false};
+  uint8_t last_sent_direction_{0xFF};
+  uint16_t last_sent_angle_{0xFFFF};
+  uint32_t last_orientation_check_ms_{0};
   uint8_t proximity_{1};            // 0=far 1=medium 2=close
   uint8_t detection_direction_{0};  // 0=default 1=left/right
   bool ai_person_detection_{true};

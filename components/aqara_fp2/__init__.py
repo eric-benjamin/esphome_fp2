@@ -57,6 +57,7 @@ SETTING_SWITCHES = {
 
 FP2LocationSwitch = aqara_fp2_ns.class_("FP2LocationSwitch", switch.Switch, cg.Component)
 FP2LearnButton = aqara_fp2_ns.class_("FP2LearnButton", button.Button, cg.Component)
+FP2OrientationButton = aqara_fp2_ns.class_("FP2OrientationButton", button.Button, cg.Component)
 AttrId = aqara_fp2_ns.enum("AttrId", is_class=True)
 
 # One-shot learning triggers (the app's "AI learning"): key -> (AttrId, icon)
@@ -301,6 +302,10 @@ CONFIG_SCHEMA = (
                 cv.Optional(k): button.button_schema(FP2LearnButton, icon=icon)
                 for k, (_, icon) in LEARN_BUTTONS.items()
             },
+            # Re-send the accelerometer's orientation (direction class + tilt) to the radar
+            cv.Optional("orientation_resend_button"): button.button_schema(
+                FP2OrientationButton, icon="mdi:axis-z-rotate-clockwise", entity_category=ENTITY_CATEGORY_CONFIG
+            ),
             **{
                 cv.Optional(k): number.number_schema(FP2MotionNumber, unit_of_measurement=unit, icon=icon, entity_category=ENTITY_CATEGORY_CONFIG).extend(
                     {cv.Optional(CONF_INITIAL_VALUE, default=default): cv.float_range(min=lo, max=hi)}
@@ -438,6 +443,11 @@ async def to_code(config):
             btn = await button.new_button(config[key])
             await cg.register_component(btn, config[key])
             cg.add(btn.set_parent(var, getattr(AttrId, attr)))
+
+    if "orientation_resend_button" in config:
+        btn = await button.new_button(config["orientation_resend_button"])
+        await cg.register_component(btn, config["orientation_resend_button"])
+        cg.add(btn.set_parent(var))
 
     for key, (kind, default, lo, hi, step, _, _) in MOTION_NUMBERS.items():
         if key in config:

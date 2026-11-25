@@ -28,6 +28,7 @@ bool AqaraFP2Accel::i2c_init_bus() {
   acc_conf.dev_addr_length = I2C_ADDR_BIT_LEN_7;
   acc_conf.device_address = ACC_SENSOR_ADDR;
   acc_conf.scl_speed_hz = frequency_;
+  acc_conf.scl_wait_us = 20000;  // tolerate clock stretching before declaring the bus stuck
   err = i2c_master_bus_add_device(bus_, &acc_conf, &acc_dev_);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "I2C add accelerometer failed: %s", esp_err_to_name(err));
@@ -114,12 +115,31 @@ void AqaraFP2Accel::task_loop_() {
 
 // Main-thread loop: publish values produced by the task
 void AqaraFP2Accel::loop() {
-  if (!lux_dirty_ || illuminance_sensor_ == nullptr || mutex_ == nullptr) return;
+  if (mutex_ == nullptr) return;
   xSemaphoreTake(mutex_, portMAX_DELAY);
-  float v = lux_value_;
+  float lux = lux_value_;
+  bool lux_dirty = lux_dirty_;
   lux_dirty_ = false;
+  bool accel_dirty = accel_dirty_;
+  accel_dirty_ = false;
+  Orientation orient = stable_orientation_;
+  int angle = output_angle_z_;
+  bool vib = acc_state_.is_vibrating;
   xSemaphoreGive(mutex_);
-  illuminance_sensor_->publish_state(v);
+  if (lux_dirty && illuminance_sensor_ != nullptr) illuminance_sensor_->publish_state(lux);
+  if (!accel_dirty) return;
+  if (orientation_sensor_ != nullptr && orient != published_orientation_) {
+    published_orientation_ = orient;
+    orientation_sensor_->publish_state(orientation_to_string(orient));
+  }
+  if (tilt_angle_sensor_ != nullptr && angle != published_angle_) {
+    published_angle_ = angle;
+    tilt_angle_sensor_->publish_state(angle);
+  }
+  if (vibration_sensor_ != nullptr && (int) vib != published_vibration_) {
+    published_vibration_ = vib;
+    vibration_sensor_->publish_state(vib);
+  }
 }
 
 // ---- OPT3001 ambient light sensor -------------------------------------
@@ -507,6 +527,7 @@ void AqaraFP2Accel::acc_data_deal(int32_t acc_raw_x, int32_t acc_raw_y, int32_t 
   acc_state_.last_acc_sum = acc_mag_sum;
 
   bool vib_state = acc_state_.is_vibrating;
+  accel_dirty_ = true;  // loop() publishes orientation / angle / vibration when they changed
 
   if (mutex_ != nullptr) {
     xSemaphoreGive(mutex_);

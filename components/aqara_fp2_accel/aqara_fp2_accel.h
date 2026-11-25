@@ -2,6 +2,8 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include <cstdint>
 #include <array>
 #include <freertos/FreeRTOS.h>
@@ -73,6 +75,12 @@ class AqaraFP2Accel : public Component {
 
   // Ambient light sensor (TI OPT3001 at 0x44 on the same bus)
   void set_illuminance_sensor(sensor::Sensor *s) { illuminance_sensor_ = s; }
+  // Accelerometer outputs as entities: the orientation class the radar is told
+  // (UP / SIDE / DOWN_TILT ...), the tilt angle in degrees, and the stock
+  // firmware's vibration flag (doubles as a tamper sensor).
+  void set_orientation_sensor(text_sensor::TextSensor *s) { orientation_sensor_ = s; }
+  void set_tilt_angle_sensor(sensor::Sensor *s) { tilt_angle_sensor_ = s; }
+  void set_vibration_sensor(binary_sensor::BinarySensor *s) { vibration_sensor_ = s; }
 
   float get_setup_priority() const override { return setup_priority::BUS; }
 
@@ -80,6 +88,7 @@ class AqaraFP2Accel : public Component {
   int get_output_angle_z() const;
   Orientation get_orientation() const;
   bool is_vibrating() const;
+  bool has_valid_orientation() const { return get_orientation() != Orientation::INVALID; }
 
   // Calibration
   bool calculate_calibration();
@@ -106,6 +115,14 @@ class AqaraFP2Accel : public Component {
   bool lux_dirty_{false};
   uint32_t lux_last_read_ms_{0};
   sensor::Sensor *illuminance_sensor_{nullptr};
+  text_sensor::TextSensor *orientation_sensor_{nullptr};
+  sensor::Sensor *tilt_angle_sensor_{nullptr};
+  binary_sensor::BinarySensor *vibration_sensor_{nullptr};
+  // Set by the sampling task under the mutex, published from loop() on the main thread
+  bool accel_dirty_{false};
+  Orientation published_orientation_{Orientation::INVALID};
+  int published_angle_{-1000};
+  int published_vibration_{-1};
 
   // Data processing
   void read_process_accel();
@@ -147,7 +164,7 @@ class AqaraFP2Accel : public Component {
   i2c_master_dev_handle_t lux_dev_{nullptr};
   uint8_t sda_pin_{33};
   uint8_t scl_pin_{32};
-  uint32_t frequency_{400000};  // 400kHz
+  uint32_t frequency_{100000};  // 100 kHz: the FP2 board sticks at 400 kHz (tigercraft4 245955e)
   bool i2c_initialized_{false};
 
   // Static task function
