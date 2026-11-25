@@ -180,6 +180,18 @@ void FP2Component::check_orientation_() {
   }
 }
 
+void FP2Component::write_attr_u8(uint16_t attr, uint8_t value) {
+  if (!init_done_) { ESP_LOGW(TAG, "write_attr ignored: radar not initialised"); return; }
+  ESP_LOGW(TAG, "LAB raw write 0x%04X = %u (UINT8)", attr, value);
+  enqueue_command_(OpCode::WRITE, (AttrId) attr, value);
+}
+
+void FP2Component::write_attr_u16(uint16_t attr, uint16_t value) {
+  if (!init_done_) { ESP_LOGW(TAG, "write_attr ignored: radar not initialised"); return; }
+  ESP_LOGW(TAG, "LAB raw write 0x%04X = %u (UINT16)", attr, value);
+  enqueue_command_(OpCode::WRITE, (AttrId) attr, value);
+}
+
 void FP2Component::trigger_learning(AttrId attr) {
   if (!init_done_) {
     ESP_LOGW(TAG, "Learning 0x%04X ignored: radar not initialised", (uint16_t) attr);

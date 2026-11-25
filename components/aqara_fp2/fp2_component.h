@@ -325,6 +325,10 @@ protected:
 class FP2Component : public Component, public uart::UARTDevice {
 public:
   void trigger_learning(AttrId attr);
+  // Lab: write a raw attribute to the radar (UINT8 / UINT16). For probing
+  // protocol values against the stock captures; nothing is persisted.
+  void write_attr_u8(uint16_t attr, uint8_t value);
+  void write_attr_u16(uint16_t attr, uint16_t value);
   void resend_orientation();
   void set_motion_timeout_s(float s) { motion_timeout_ms_ = (uint32_t) (s * 1000.0f); }
   void set_motion_distance_cm(float cm) { motion_distance_cm_ = cm; }
