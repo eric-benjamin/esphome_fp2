@@ -1116,8 +1116,12 @@ void FP2Component::handle_location_tracking_report_(const std::vector<uint8_t> &
 // Wall mode: sensor top-centre, X negative = right.
 bool FP2Component::target_cell_(int16_t x, int16_t y, int &col, int &row) const {
   if (mounting_position_ == 0x02 || mounting_position_ == 0x03) {
-    col = 2 + (int) ((-(float) x + 400.0f) / 800.0f * 14.0f);
-    row = (int) ((float) y / 800.0f * 14.0f);
+    // Measured on FW 100 in left-corner mode against the radar's own zone
+    // reports: x = 0 at column 8, +x to the left, 50 cm cells (same maths as
+    // the card). Right corner assumed mirrored.
+    float gc = mounting_position_ == 0x03 ? 8.0f + (float) x / 50.0f : 8.0f - (float) x / 50.0f;
+    col = (int) floorf(gc);
+    row = (int) floorf((float) y / 50.0f);
   } else {
     col = 8 - (int) floorf((float) x / 20.0f) - 1;
     row = (int) ((float) y / 20.0f);
