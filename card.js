@@ -395,12 +395,10 @@ class AqaraFP2Card extends HTMLElement {
   // viewer's left (sensor at the top looking down the canvas). Wall mode
   // units are 2.5 cm (measured: 1 m ~ 40), i.e. 20 units per 0.5 m cell.
   toGrid(x, y) {
-    // Corner frame, laser-verified on radar FW 100 in left-corner mode: the
-    // sensor corner is the origin, x is centimetres along the wall to the
-    // RIGHT of the sensor, y centimetres into the room, 50 cm cells. (The old
-    // guess mirrored x and used 57 cm cells.) Right corner is the mirror image
-    // from column 16 (untested).
-    if (this.data.corner) return { gc: this.data.mounting === "right_corner" ? 16 - x / 50 : 2 + x / 50, gr: y / 50 };
+    // Corner frame on radar FW 100, left-corner mode, from his laser points:
+    // +x runs to the LEFT, 50 cm cells, x = 0 at column 10; y is centimetres
+    // into the room from the sensor wall. Right corner mirrored (untested).
+    if (this.data.corner) return { gc: this.data.mounting === "right_corner" ? 6 + x / 50 : 10 - x / 50, gr: y / 50 };
     return { gc: 8 - x / 20, gr: y / 20 };
   }
   sensorCell() { return this.data.corner ? (this.data.mounting === "right_corner" ? { gc: 16, gr: 0 } : { gc: 2, gr: 0 }) : { gc: 8, gr: 0 }; }
