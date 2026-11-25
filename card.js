@@ -254,11 +254,12 @@ class AqaraFP2Card extends HTMLElement {
     const rows = mc.grid_rows || 20, cols = mc.grid_cols || 16;
     const mounting = this.st(this.ent("select", "mounting_position")) || mc.mounting_position || "wall";
     const corner = /corner/.test(mounting);
-    let view = mc.view || (mc.mounting_position && mc.mounting_position !== "wall" ? [2, 0, 14, 14] : [0, 0, 16, 20]);
+    // Corner modes: the sensor sits in the outer corner of the full 16-column grid (column 0 left, 16 right).
+    let view = mc.view || (mc.mounting_position === "left_corner" ? [0, 0, 14, 14] : mc.mounting_position === "right_corner" ? [2, 0, 14, 14] : [0, 0, 16, 20]);
     if (this.config.width || this.config.depth) {
       const cw = Math.max(1, Math.round((this.config.width || 8) / 0.5));
       const rh = Math.max(1, Math.round((this.config.depth || 10) / 0.5));
-      const sc = corner ? (mounting === "right_corner" ? 16 : 2) : 8;
+      const sc = corner ? (mounting === "right_corner" ? 16 : 0) : 8;
       let c = corner ? (mounting === "right_corner" ? sc - cw : sc) : Math.round(sc - cw / 2 - (this.config.shift || 0) / 0.5);
       c = Math.max(0, Math.min(cols - cw, c));
       view = [c, 0, Math.min(cols, cw), Math.min(rows, rh)];
@@ -404,7 +405,7 @@ class AqaraFP2Card extends HTMLElement {
     if (this.data.corner) return { gc: this.data.mounting === "right_corner" ? 8 + x / 50 : 8 - x / 50, gr: y / 50 };
     return { gc: 8 - x / 20, gr: y / 20 };
   }
-  sensorCell() { return this.data.corner ? (this.data.mounting === "right_corner" ? { gc: 16, gr: 0 } : { gc: 2, gr: 0 }) : { gc: 8, gr: 0 }; }
+  sensorCell() { return this.data.corner ? (this.data.mounting === "right_corner" ? { gc: 16, gr: 0 } : { gc: 0, gr: 0 }) : { gc: 8, gr: 0 }; }
   toMeters(x, y) { return this.data.corner ? { x: x / 100, y: y / 100 } : { x: x / 40, y: y / 40 }; }
 
   // ---------------------------------------------------------------- canvas

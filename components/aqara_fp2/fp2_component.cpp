@@ -1803,9 +1803,17 @@ void FP2Component::json_get_map_data(JsonObject root) {
   root["grid_format"] = "rows20";
   root["cell_size_m"] = 0.5;
   {
-    // active view for the current mounting mode: [col0, row0, cols, rows]
+    // active view for the current mounting mode: [col0, row0, cols, rows].
+    // Corner modes: the radar's frame runs x = +400 (column 0 left edge) to
+    // -400 (column 16); the sensor sits in the OUTER corner of the full grid,
+    // column 0 for the left corner and column 16 for the right one, not at
+    // column 2 / 14. Measured 2026-11-25: with the view starting at column 2
+    // every zone drawn in the card sat one metre to the right of the room and
+    // the strip along the sensor's own wall (columns 0-1) was invisible.
     JsonArray view = root["view"].to<JsonArray>();
-    if (mounting_position_ == 0x02 || mounting_position_ == 0x03) {
+    if (mounting_position_ == 0x02) {
+      view.add(0); view.add(0); view.add(14); view.add(14);
+    } else if (mounting_position_ == 0x03) {
       view.add(2); view.add(0); view.add(14); view.add(14);
     } else {
       view.add(0); view.add(0); view.add(16); view.add(20);
