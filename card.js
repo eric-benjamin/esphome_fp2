@@ -557,8 +557,11 @@ class AqaraFP2Card extends HTMLElement {
     {
       const s = this.sensorCell();
       const px = X(s.gc), py = Y(s.gr);
+      // The beam arcs face the way the sensor looks: straight into the room on a
+      // wall, along the diagonal from a corner (as the Aqara app draws it).
+      const rot = this.data.corner ? (this.data.mounting === "right_corner" ? Math.PI / 4 : -Math.PI / 4) : 0;
       ctx.strokeStyle = "rgba(150,90,255,0.9)"; ctx.lineWidth = 2;
-      [4, 8, 12].forEach((rr) => { ctx.beginPath(); ctx.arc(px, py, rr, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke(); });
+      [4, 8, 12].forEach((rr) => { ctx.beginPath(); ctx.arc(px, py, rr, Math.PI * 0.15 + rot, Math.PI * 0.85 + rot); ctx.stroke(); });
       ctx.fillStyle = "rgb(150,90,255)"; ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI * 2); ctx.fill();
     }
 
