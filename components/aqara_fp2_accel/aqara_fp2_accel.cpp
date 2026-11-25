@@ -113,8 +113,52 @@ void AqaraFP2Accel::task_loop_() {
   vTaskDelete(nullptr);
 }
 
+// Tamper: runs on the task thread once per good 10-sample block (~1 s).
+void AqaraFP2Accel::update_tamper_(int32_t ax, int32_t ay, int32_t az) {
+  uint32_t now = millis();
+  if (mutex_ != nullptr) xSemaphoreTake(mutex_, portMAX_DELAY);
+  bool want_baseline = baseline_request_ || (!baseline_.valid && good_blocks_ >= 30);  // ~30 s of clean data after boot
+  if (want_baseline) {
+    float m = sqrtf((float) ax * ax + (float) ay * ay + (float) az * az);
+    baseline_ = {ax / m, ay / m, az / m, 1};
+    baseline_request_ = false;
+    baseline_save_pending_ = true;
+    dev_over_since_ = dev_under_since_ = 0;
+    tamper_ = false;
+    ESP_LOGI(TAG, "Tamper baseline set: (%.3f, %.3f, %.3f)", baseline_.x, baseline_.y, baseline_.z);
+  }
+  if (baseline_.valid) {
+    float m = sqrtf((float) ax * ax + (float) ay * ay + (float) az * az);
+    float dot = (ax / m) * baseline_.x + (ay / m) * baseline_.y + (az / m) * baseline_.z;
+    if (dot > 1.0f) dot = 1.0f; if (dot < -1.0f) dot = -1.0f;
+    deviation_deg_ = acosf(dot) * 180.0f / 3.14159265f;
+    bool over = deviation_deg_ >= tamper_threshold_deg_;
+    if (over) { dev_under_since_ = 0; if (dev_over_since_ == 0) dev_over_since_ = now; }
+    else      { dev_over_since_ = 0;  if (dev_under_since_ == 0) dev_under_since_ = now; }
+    if (!tamper_ && over && now - dev_over_since_ >= tamper_hold_ms_) {
+      tamper_ = true;  ESP_LOGW(TAG, "TAMPER detected: deviation %.1f deg >= %.1f for %u ms", deviation_deg_, tamper_threshold_deg_, (unsigned) tamper_hold_ms_);
+    } else if (tamper_ && !over && now - dev_under_since_ >= tamper_hold_ms_) {
+      tamper_ = false; ESP_LOGI(TAG, "Tamper clear: deviation %.1f deg", deviation_deg_);
+    }
+  }
+  if (mutex_ != nullptr) xSemaphoreGive(mutex_);
+}
+
 // Main-thread loop: publish values produced by the task
 void AqaraFP2Accel::loop() {
+  if (!baseline_loaded_) {
+    baseline_loaded_ = true;
+    baseline_pref_ = global_preferences->make_preference<TamperBaseline>(0x7A4B5E01);
+    TamperBaseline b{};
+    if (baseline_pref_.load(&b) && b.valid) {
+      if (mutex_ != nullptr) xSemaphoreTake(mutex_, portMAX_DELAY);
+      baseline_ = b;
+      if (mutex_ != nullptr) xSemaphoreGive(mutex_);
+      ESP_LOGI(TAG, "Tamper baseline restored from flash: (%.3f, %.3f, %.3f)", b.x, b.y, b.z);
+    } else {
+      ESP_LOGI(TAG, "No tamper baseline in flash; capturing after ~30 s of clean samples");
+    }
+  }
   if (mutex_ == nullptr) return;
   xSemaphoreTake(mutex_, portMAX_DELAY);
   float lux = lux_value_;
@@ -125,14 +169,35 @@ void AqaraFP2Accel::loop() {
   Orientation orient = stable_orientation_;
   int angle = output_angle_z_;
   bool vib = acc_state_.is_vibrating;
+  bool tamper = tamper_;
+  float deviation = deviation_deg_;
+  bool save_baseline = baseline_save_pending_;
+  baseline_save_pending_ = false;
+  TamperBaseline b = baseline_;
   xSemaphoreGive(mutex_);
+  if (save_baseline) {
+    baseline_pref_.save(&b);
+    ESP_LOGI(TAG, "Tamper baseline saved to flash");
+  }
+  if (tamper_sensor_ != nullptr && (int) tamper != published_tamper_) {
+    published_tamper_ = tamper;
+    tamper_sensor_->publish_state(tamper);
+  }
+  if (tamper_deviation_sensor_ != nullptr && !std::isnan(deviation)) {
+    uint32_t now = millis();
+    bool changed = std::isnan(published_deviation_) || fabsf(deviation - published_deviation_) >= 0.5f;
+    if (changed || now - deviation_published_ms_ >= 60000) {
+      published_deviation_ = deviation; deviation_published_ms_ = now;
+      tamper_deviation_sensor_->publish_state(roundf(deviation * 10.0f) / 10.0f);
+    }
+  }
   if (lux_dirty && illuminance_sensor_ != nullptr) illuminance_sensor_->publish_state(lux);
   if (!accel_dirty) return;
   if (orientation_sensor_ != nullptr && orient != published_orientation_) {
     published_orientation_ = orient;
     orientation_sensor_->publish_state(orientation_to_string(orient));
   }
-  if (tilt_angle_sensor_ != nullptr && angle != published_angle_) {
+  if (tilt_angle_sensor_ != nullptr && (published_angle_ == -1000 || abs(angle - published_angle_) >= 2)) {
     published_angle_ = angle;
     tilt_angle_sensor_->publish_state(angle);
   }
@@ -586,6 +651,22 @@ void AqaraFP2Accel::read_process_accel() {
 
     int energy_sum = (x2 / 10) + (y2 / 10) + (z2 / 10);
 
+    // 2b. Plausibility: the averaged vector must be about 1 g (1024 units).
+    //     A corrupted I2C read (the loft unit shows them) lands far outside
+    //     and would otherwise fire the vibration flag and skew the tilt.
+    {
+      int32_t cx = accel_corr_x_ + acc_x_avg_, cy = accel_corr_y_ + acc_y_avg_, cz = accel_corr_z_ + acc_z_avg_;
+      float mag = sqrtf((float) cx * cx + (float) cy * cy + (float) cz * cz);
+      if (mag < 1024.0f * 0.8f || mag > 1024.0f * 1.2f) {
+        dropped_blocks_++;
+        if (dropped_blocks_ == 1 || dropped_blocks_ % 50 == 0)
+          ESP_LOGW(TAG, "Accel block dropped: |g| = %.0f units (%lu dropped so far)", mag, (unsigned long) dropped_blocks_);
+        return;
+      }
+      good_blocks_++;
+      update_tamper_(cx, cy, cz);
+    }
+
     // 3. Process Data
     acc_data_deal(
       (int32_t)(accel_corr_x_ + acc_x_avg_),
@@ -600,6 +681,29 @@ void AqaraFP2Accel::read_process_accel() {
     //    (int32_t)(accel_corr_z_ + acc_z_avg_)
     //);
   }
+}
+
+
+// ---- Tamper numbers --------------------------------------------------------
+void FP2AccelNumber::setup() {
+  pref_ = global_preferences->make_preference<float>(0x7A4B5E10 + kind_);
+  float v = initial_;
+  float stored;
+  if (pref_.load(&stored) && !std::isnan(stored)) v = stored;
+  apply_(v);
+  this->publish_state(v);
+}
+
+void FP2AccelNumber::control(float value) {
+  apply_(value);
+  pref_.save(&value);
+  this->publish_state(value);
+}
+
+void FP2AccelNumber::apply_(float value) {
+  if (parent_ == nullptr) return;
+  if (kind_ == THRESHOLD) parent_->set_tamper_threshold(value);
+  else parent_->set_tamper_hold(value);
 }
 
 }  // namespace aqara_fp2_accel

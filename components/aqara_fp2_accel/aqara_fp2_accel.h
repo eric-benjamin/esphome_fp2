@@ -4,6 +4,9 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/number/number.h"
+#include "esphome/components/button/button.h"
+#include "esphome/core/preferences.h"
 #include <cstdint>
 #include <array>
 #include <freertos/FreeRTOS.h>
@@ -81,6 +84,17 @@ class AqaraFP2Accel : public Component {
   void set_orientation_sensor(text_sensor::TextSensor *s) { orientation_sensor_ = s; }
   void set_tilt_angle_sensor(sensor::Sensor *s) { tilt_angle_sensor_ = s; }
   void set_vibration_sensor(binary_sensor::BinarySensor *s) { vibration_sensor_ = s; }
+  // Tamper: the angle between the current gravity vector and a baseline stored
+  // in flash. Detected when the deviation stays at or above the threshold for
+  // the hold time; clear when it stays below for the hold time. Blocks whose
+  // magnitude is not within 20 % of 1 g (corrupted I2C reads) are dropped.
+  void set_tamper_sensor(binary_sensor::BinarySensor *s) { tamper_sensor_ = s; }
+  void set_tamper_deviation_sensor(sensor::Sensor *s) { tamper_deviation_sensor_ = s; }
+  void set_tamper_threshold(float deg) { tamper_threshold_deg_ = deg; }
+  void set_tamper_hold(float seconds) { tamper_hold_ms_ = (uint32_t) (seconds * 1000.0f); }
+  float get_tamper_threshold() const { return tamper_threshold_deg_; }
+  float get_tamper_hold() const { return tamper_hold_ms_ / 1000.0f; }
+  void request_tamper_baseline() { baseline_request_ = true; }
 
   float get_setup_priority() const override { return setup_priority::BUS; }
 
@@ -120,6 +134,24 @@ class AqaraFP2Accel : public Component {
   binary_sensor::BinarySensor *vibration_sensor_{nullptr};
   // Set by the sampling task under the mutex, published from loop() on the main thread
   bool accel_dirty_{false};
+  // Tamper state (task thread writes under the mutex, loop() publishes)
+  binary_sensor::BinarySensor *tamper_sensor_{nullptr};
+  sensor::Sensor *tamper_deviation_sensor_{nullptr};
+  float tamper_threshold_deg_{3.0f};
+  uint32_t tamper_hold_ms_{3000};
+  struct TamperBaseline { float x, y, z; uint8_t valid; } baseline_{0, 0, 0, 0};
+  ESPPreferenceObject baseline_pref_;
+  bool baseline_loaded_{false};
+  volatile bool baseline_request_{false};
+  bool baseline_save_pending_{false};
+  float deviation_deg_{NAN};
+  bool tamper_{false};
+  uint32_t dev_over_since_{0}, dev_under_since_{0};
+  uint32_t good_blocks_{0}, dropped_blocks_{0};
+  int published_tamper_{-1};
+  float published_deviation_{NAN};
+  uint32_t deviation_published_ms_{0};
+  void update_tamper_(int32_t ax, int32_t ay, int32_t az);
   Orientation published_orientation_{Orientation::INVALID};
   int published_angle_{-1000};
   int published_vibration_{-1};
@@ -172,6 +204,32 @@ class AqaraFP2Accel : public Component {
 
   // Thread-safe task loop
   void task_loop_();
+};
+
+
+// Runtime-tunable tamper numbers (threshold in degrees, hold in seconds),
+// restored from flash so a value set in Home Assistant survives a reboot.
+class FP2AccelNumber : public number::Number, public Component {
+ public:
+  enum Kind : uint8_t { THRESHOLD = 0, HOLD = 1 };
+  void set_parent(AqaraFP2Accel *parent, uint8_t kind, float initial) { parent_ = parent; kind_ = (Kind) kind; initial_ = initial; }
+  void setup() override;
+ protected:
+  void control(float value) override;
+  void apply_(float value);
+  AqaraFP2Accel *parent_{nullptr};
+  Kind kind_{THRESHOLD};
+  float initial_{3.0f};
+  ESPPreferenceObject pref_;
+};
+
+// Re-captures the tamper baseline from the current gravity vector.
+class FP2AccelBaselineButton : public button::Button, public Component {
+ public:
+  void set_parent(AqaraFP2Accel *parent) { parent_ = parent; }
+ protected:
+  void press_action() override { if (parent_ != nullptr) parent_->request_tamper_baseline(); }
+  AqaraFP2Accel *parent_{nullptr};
 };
 
 }  // namespace aqara_fp2_accel

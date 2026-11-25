@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import sensor, text_sensor, binary_sensor
+from esphome.components import sensor, text_sensor, binary_sensor, number, button
 from esphome.const import (
     CONF_ID,
     DEVICE_CLASS_ILLUMINANCE,
@@ -8,10 +8,12 @@ from esphome.const import (
     UNIT_LUX,
     UNIT_DEGREES,
     DEVICE_CLASS_VIBRATION,
+    DEVICE_CLASS_TAMPER,
+    ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
 
-AUTO_LOAD = ["sensor", "text_sensor", "binary_sensor"]
+AUTO_LOAD = ["sensor", "text_sensor", "binary_sensor", "number", "button"]
 
 CONF_ILLUMINANCE = "illuminance"
 
@@ -21,6 +23,14 @@ aqara_fp2_accel_ns = cg.esphome_ns.namespace("aqara_fp2_accel")
 AqaraFP2Accel = aqara_fp2_accel_ns.class_(
     "AqaraFP2Accel", cg.Component
 )
+FP2AccelNumber = aqara_fp2_accel_ns.class_("FP2AccelNumber", number.Number, cg.Component)
+FP2AccelBaselineButton = aqara_fp2_accel_ns.class_("FP2AccelBaselineButton", button.Button, cg.Component)
+# key: (kind, default, min, max, step, unit, icon)
+TAMPER_NUMBERS = {
+    "tamper_threshold": (0, 3.0, 0.5, 45.0, 0.5, "°", "mdi:angle-acute"),
+    "tamper_hold": (1, 3.0, 1.0, 60.0, 1.0, "s", "mdi:timer-outline"),
+}
+CONF_INITIAL_VALUE = "initial_value"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -45,10 +55,31 @@ CONFIG_SCHEMA = cv.Schema(
             state_class=STATE_CLASS_MEASUREMENT,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
-        # The stock firmware's vibration flag (knock / tamper)
+        # The stock firmware's vibration flag (knock). Measured 2026-11-25: fires on
+        # corrupted reads, 10 x in 90 min on an untouched unit; not a tamper signal.
         cv.Optional("vibration"): binary_sensor.binary_sensor_schema(
             device_class=DEVICE_CLASS_VIBRATION
         ),
+        # Tamper: gravity vector vs a baseline stored in flash (see the header)
+        cv.Optional("tamper"): binary_sensor.binary_sensor_schema(
+            device_class=DEVICE_CLASS_TAMPER
+        ),
+        cv.Optional("tamper_deviation"): sensor.sensor_schema(
+            unit_of_measurement=UNIT_DEGREES,
+            accuracy_decimals=1,
+            icon="mdi:rotate-3d-variant",
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional("tamper_baseline_button"): button.button_schema(
+            FP2AccelBaselineButton, icon="mdi:crosshairs-gps", entity_category=ENTITY_CATEGORY_CONFIG
+        ),
+        **{
+            cv.Optional(k): number.number_schema(
+                FP2AccelNumber, unit_of_measurement=unit, icon=icon, entity_category=ENTITY_CATEGORY_CONFIG
+            ).extend({cv.Optional(CONF_INITIAL_VALUE, default=default): cv.float_range(min=lo, max=hi)})
+            for k, (_, default, lo, hi, _, unit, icon) in TAMPER_NUMBERS.items()
+        },
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -80,3 +111,18 @@ async def to_code(config):
     if "vibration" in config:
         bs = await binary_sensor.new_binary_sensor(config["vibration"])
         cg.add(var.set_vibration_sensor(bs))
+    if "tamper" in config:
+        bs = await binary_sensor.new_binary_sensor(config["tamper"])
+        cg.add(var.set_tamper_sensor(bs))
+    if "tamper_deviation" in config:
+        sens = await sensor.new_sensor(config["tamper_deviation"])
+        cg.add(var.set_tamper_deviation_sensor(sens))
+    if "tamper_baseline_button" in config:
+        btn = await button.new_button(config["tamper_baseline_button"])
+        await cg.register_component(btn, config["tamper_baseline_button"])
+        cg.add(btn.set_parent(var))
+    for key, (kind, default, lo, hi, step, _, _) in TAMPER_NUMBERS.items():
+        if key in config:
+            num = await number.new_number(config[key], min_value=lo, max_value=hi, step=step)
+            await cg.register_component(num, config[key])
+            cg.add(num.set_parent(var, kind, config[key][CONF_INITIAL_VALUE]))
