@@ -1116,10 +1116,13 @@ void FP2Component::handle_location_tracking_report_(const std::vector<uint8_t> &
 // Wall mode: sensor top-centre, X negative = right.
 bool FP2Component::target_cell_(int16_t x, int16_t y, int &col, int &row) const {
   if (mounting_position_ == 0x02 || mounting_position_ == 0x03) {
-    // FW 100 left-corner frame from his laser points: +x to the LEFT, 50 cm
-    // cells, x = 0 at column 10, y in cm into the room (same maths as the
-    // card). Right corner mirrored (untested).
-    float gc = mounting_position_ == 0x03 ? 6.0f + (float) x / 50.0f : 10.0f - (float) x / 50.0f;
+    // FW 100 left-corner frame, MEASURED against the radar's own zone reports
+    // (2026-11-25, probe zone + walks, five crossings of one column edge
+    // bracketed x = 195..207 for the edge of column 4; nine crossings of row 1's
+    // edges at ~50 and ~100 cm): +x runs to the LEFT, 50 cm cells, x = 0 at the
+    // column 7/8 boundary, y = cm into the room from the sensor wall. Same maths
+    // as the card's toGrid(). Right corner mirrored about column 8 (unmeasured).
+    float gc = mounting_position_ == 0x03 ? 8.0f + (float) x / 50.0f : 8.0f - (float) x / 50.0f;
     col = (int) floorf(gc);
     row = (int) floorf((float) y / 50.0f);
   } else {
