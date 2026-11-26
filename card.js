@@ -15,6 +15,7 @@
  *   max_height: 520          cell_size: 0 (px, 0 = fit width)   debug: false
  *   width: 5                       shown area in metres, centred on the radar (wall mode)
  *   depth: 5                       shown depth in metres from the radar
+ *   (input_number.<device>_view_width / _view_depth in HA override width/depth when > 0)
  *   shift: 0                       move the shown area left (+) / right (-) in metres
  *   view: [col, row, cols, rows]   raw crop of the 16x20 grid (overrides width/depth)
  *   auto_crop: false               crop to the drawn zones/maps (+1 cell margin)
@@ -256,9 +257,15 @@ class AqaraFP2Card extends HTMLElement {
     const corner = /corner/.test(mounting);
     // Corner modes: the sensor sits in the outer corner of the full 16-column grid (column 0 left, 16 right).
     let view = mc.view || (mc.mounting_position === "left_corner" ? [0, 0, 14, 14] : mc.mounting_position === "right_corner" ? [2, 0, 14, 14] : [0, 0, 16, 20]);
-    if (this.config.width || this.config.depth) {
-      const cw = Math.max(1, Math.round((this.config.width || 8) / 0.5));
-      const rh = Math.max(1, Math.round((this.config.depth || 10) / 0.5));
+    // Shown room size in metres: the HA helpers input_number.<device>_view_width /
+    // _view_depth win when set (> 0), so the window can be dialled from the
+    // dashboard like the Aqara app's room size; the card YAML width/depth is the fallback.
+    const hw = parseFloat(this.st(`input_number.${this.deviceName()}_view_width`)) || 0;
+    const hd = parseFloat(this.st(`input_number.${this.deviceName()}_view_depth`)) || 0;
+    const vw = hw > 0 ? hw : this.config.width, vd = hd > 0 ? hd : this.config.depth;
+    if (vw || vd) {
+      const cw = Math.max(1, Math.round((vw || 8) / 0.5));
+      const rh = Math.max(1, Math.round((vd || 10) / 0.5));
       const sc = corner ? (mounting === "right_corner" ? 16 : 0) : 8;
       let c = corner ? (mounting === "right_corner" ? sc - cw : sc) : Math.round(sc - cw / 2 - (this.config.shift || 0) / 0.5);
       c = Math.max(0, Math.min(cols - cw, c));
