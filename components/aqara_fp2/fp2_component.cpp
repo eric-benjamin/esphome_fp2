@@ -1181,8 +1181,10 @@ bool FP2Component::target_cell_(int16_t x, int16_t y, int &col, int &row) const 
     // bracketed x = 195..207 for the edge of column 4; nine crossings of row 1's
     // edges at ~50 and ~100 cm): +x runs to the LEFT, 50 cm cells, x = 0 at the
     // column 7/8 boundary, y = cm into the room from the sensor wall. Same maths
-    // as the card's toGrid(). Right corner mirrored about column 8 (unmeasured).
-    float gc = mounting_position_ == 0x03 ? 8.0f + (float) x / 50.0f : 8.0f - (float) x / 50.0f;
+    // as the card's toGrid(). The right corner uses the SAME frame: with x
+    // mirrored here a right-corner unit placed its owner reversed (2026-11-26);
+    // only the sensor cell (column 16) and the view window differ.
+    float gc = 8.0f - (float) x / 50.0f;
     col = (int) floorf(gc);
     row = (int) floorf((float) y / 50.0f);
   } else {

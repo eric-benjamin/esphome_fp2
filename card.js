@@ -400,9 +400,12 @@ class AqaraFP2Card extends HTMLElement {
     // radar's own zone reports (2026-11-25, probe zone + walks): +x runs to the
     // LEFT, 50 cm cells, x = 0 at the column 7/8 boundary (column 4's outer
     // edge bracketed x = 195..207 over five crossings); y is centimetres into
-    // the room from the sensor wall. Right corner mirrored about column 8
-    // (unmeasured). Same maths as target_cell_() in the component.
-    if (this.data.corner) return { gc: this.data.mounting === "right_corner" ? 8 + x / 50 : 8 - x / 50, gr: y / 50 };
+    // the room from the sensor wall. The SAME frame in both corner modes: a
+    // right-corner unit (bedroom, 2026-11-26) drew its owner mirrored when the
+    // x axis was flipped here, so the radar does not mirror x for the right
+    // corner; only the sensor cell (16) and the view window differ.
+    // Same maths as target_cell_() in the component.
+    if (this.data.corner) return { gc: 8 - x / 50, gr: y / 50 };
     return { gc: 8 - x / 20, gr: y / 20 };
   }
   sensorCell() { return this.data.corner ? (this.data.mounting === "right_corner" ? { gc: 16, gr: 0 } : { gc: 0, gr: 0 }) : { gc: 8, gr: 0 }; }
